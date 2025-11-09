@@ -1,0 +1,13 @@
+{
+  "name": "payments-lambda",
+  "version": "1.0.0",
+  "description": "Lambda function for Stripe payments",
+  "main": "index.js",
+  "dependencies": {
+    "stripe": "^13.0.0",
+    "@aws-sdk/client-rds-data": "^3.400.0",
+    "@aws-sdk/client-secrets-manager": "^3.400.0",
+    "pg": "^8.11.0"
+  }
+}
+

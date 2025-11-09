@@ -1,0 +1,33 @@
+{
+  "name": "togetherunite-frontend",
+  "version": "1.0.0",
+  "description": "TogetherUnite React/Next.js frontend",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^14.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@aws-amplify/auth": "^5.0.0",
+    "@aws-amplify/core": "^5.0.0",
+    "aws-amplify": "^5.0.0",
+    "@stripe/stripe-js": "^2.0.0",
+    "@stripe/react-stripe-js": "^2.0.0",
+    "axios": "^1.6.0",
+    "qrcode.react": "^3.1.0",
+    "react-qr-code": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.0.0",
+    "eslint": "^8.0.0",
+    "eslint-config-next": "^14.0.0"
+  }
+}
+

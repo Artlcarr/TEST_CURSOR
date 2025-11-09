@@ -1,0 +1,22 @@
+{
+  "name": "togetherunite",
+  "version": "1.0.0",
+  "description": "TogetherUnite - Citizen-powered advocacy platform",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend",
+    "infra"
+  ],
+  "scripts": {
+    "bootstrap": "cd infra && npm run bootstrap",
+    "deploy": "cd infra && npm run deploy",
+    "build": "npm run build --workspaces",
+    "dev": "cd frontend && npm run dev"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+

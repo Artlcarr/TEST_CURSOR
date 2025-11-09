@@ -1,0 +1,24 @@
+{
+  "name": "togetherunite-infra",
+  "version": "1.0.0",
+  "description": "AWS CDK infrastructure for TogetherUnite",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "bootstrap": "cdk bootstrap aws://ACCOUNT_ID/us-east-1",
+    "deploy": "cdk deploy --all",
+    "synth": "cdk synth",
+    "diff": "cdk diff"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.100.0",
+    "constructs": "^10.0.0",
+    "source-map-support": "^0.5.21"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+

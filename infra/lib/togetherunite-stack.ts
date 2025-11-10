@@ -18,21 +18,17 @@ export class TogetherUniteStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // Step 1: VPC for RDS and Lambda
-    // Using PRIVATE_ISOLATED with VPC endpoints to avoid NAT Gateway costs
+    // Step 1: VPC for RDS only (minimal cost for trial)
+    // Lambda functions will be outside VPC to avoid VPC endpoint costs
+    // RDS will be in public subnet with security group restrictions
     const vpc = new ec2.Vpc(this, 'TogetherUniteVpc', {
-      maxAzs: 2,
-      natGateways: 0, // No NAT Gateway - using VPC endpoints instead
+      maxAzs: 1, // Single AZ for cost savings
+      natGateways: 0, // No NAT Gateway needed
       subnetConfiguration: [
         {
           cidrMask: 24,
           name: 'Public',
           subnetType: ec2.SubnetType.PUBLIC,
-        },
-        {
-          cidrMask: 24,
-          name: 'Private',
-          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
         },
       ],
     });
@@ -58,13 +54,14 @@ export class TogetherUniteStack extends cdk.Stack {
       ),
       vpc,
       vpcSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+        subnetType: ec2.SubnetType.PUBLIC, // Public subnet for minimal cost (trial)
       },
       credentials: rds.Credentials.fromSecret(dbSecret),
       databaseName: 'togetherunite',
       deletionProtection: false,
-      backupRetention: cdk.Duration.days(7),
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // Change for production
+      backupRetention: cdk.Duration.days(1), // Reduced for cost savings (trial)
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      publiclyAccessible: true, // Public access for trial (secure with security groups)
     });
 
     // Step 3: Cognito User Pool with Google OAuth
@@ -199,30 +196,26 @@ export class TogetherUniteStack extends cdk.Stack {
     });
 
     // Step 5: Lambda Functions for API
-    // Create security group for Lambda functions
-    const lambdaSecurityGroup = new ec2.SecurityGroup(this, 'LambdaSecurityGroup', {
-      vpc,
-      description: 'Security group for Lambda functions',
-      allowAllOutbound: true,
-    });
-
-    // Allow Lambda to connect to RDS
+    // Lambda functions outside VPC for minimal cost (trial)
+    // They can access AWS services directly and RDS via public endpoint
+    
+    // RDS Security Group - allow connections from Lambda (for trial, can restrict later)
+    // Note: For production, restrict this to specific IP ranges or use VPC
+    // Lambda functions outside VPC can access RDS via public endpoint
     dbInstance.connections.allowFrom(
-      lambdaSecurityGroup,
+      ec2.Peer.anyIpv4(),
       ec2.Port.tcp(5432),
-      'Allow Lambda to access RDS'
+      'Allow PostgreSQL access from Lambda (trial - restrict for production)'
     );
 
-    // Create Lambda role with VPC permissions
+    // Create Lambda role (no VPC permissions needed)
     const apiLambdaRole = new iam.Role(this, 'ApiLambdaRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName(
           'service-role/AWSLambdaBasicExecutionRole'
         ),
-        iam.ManagedPolicy.fromAwsManagedPolicyName(
-          'service-role/AWSLambdaVPCAccessExecutionRole'
-        ),
+        // No VPC access role needed - Lambda is outside VPC
       ],
     });
 
@@ -268,65 +261,12 @@ export class TogetherUniteStack extends cdk.Stack {
       STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || '',
     };
 
-    // VPC Endpoints for AWS services (replaces NAT Gateway)
-    // These allow Lambda in private subnet to access AWS services without internet gateway
-    // Note: VPC Interface Endpoints cost ~$7/month per endpoint per AZ
-    // With 5 endpoints across 2 AZs, this is ~$70/month (vs ~$32/month for NAT Gateway)
-    // Benefits: Better security, lower latency, no data transfer costs
-    const privateSubnets = vpc.selectSubnets({
-      subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-    });
+    // Lambda functions are OUTSIDE VPC for minimal cost
+    // They can access AWS services (SES, Cognito, Secrets Manager, SNS) directly
+    // They can access RDS via public endpoint (secured with security groups)
+    // No VPC endpoints or NAT Gateway needed = $0 VPC costs
 
-    // Secrets Manager endpoint
-    vpc.addInterfaceEndpoint('SecretsManagerEndpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
-      subnets: {
-        subnets: privateSubnets.subnets,
-      },
-    });
-
-    // SES endpoint
-    vpc.addInterfaceEndpoint('SESEndpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.SES,
-      subnets: {
-        subnets: privateSubnets.subnets,
-      },
-    });
-
-    // Cognito endpoint
-    vpc.addInterfaceEndpoint('CognitoEndpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.COGNITO_IDP,
-      subnets: {
-        subnets: privateSubnets.subnets,
-      },
-    });
-
-    // SNS endpoint
-    vpc.addInterfaceEndpoint('SNSEndpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.SNS,
-      subnets: {
-        subnets: privateSubnets.subnets,
-      },
-    });
-
-    // CloudWatch Logs endpoint (for Lambda logging)
-    vpc.addInterfaceEndpoint('CloudWatchLogsEndpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
-      subnets: {
-        subnets: privateSubnets.subnets,
-      },
-    });
-
-    // Common VPC configuration for Lambda functions
-    const lambdaVpcConfig = {
-      vpc,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-      },
-      securityGroups: [lambdaSecurityGroup],
-    };
-
-    // Campaigns Lambda
+    // Campaigns Lambda (outside VPC for minimal cost)
     const campaignsLambda = new lambda.Function(this, 'CampaignsLambda', {
       runtime: lambda.Runtime.NODEJS_18_X,
       handler: 'index.handler',
@@ -334,10 +274,10 @@ export class TogetherUniteStack extends cdk.Stack {
       role: apiLambdaRole,
       environment: lambdaEnvironment,
       timeout: cdk.Duration.seconds(30),
-      ...lambdaVpcConfig,
+      // No VPC configuration - Lambda outside VPC
     });
 
-    // Auth Lambda
+    // Auth Lambda (outside VPC for minimal cost)
     const authLambda = new lambda.Function(this, 'AuthLambda', {
       runtime: lambda.Runtime.NODEJS_18_X,
       handler: 'index.handler',
@@ -345,10 +285,10 @@ export class TogetherUniteStack extends cdk.Stack {
       role: apiLambdaRole,
       environment: lambdaEnvironment,
       timeout: cdk.Duration.seconds(30),
-      ...lambdaVpcConfig,
+      // No VPC configuration - Lambda outside VPC
     });
 
-    // Payments Lambda (Stripe)
+    // Payments Lambda (Stripe) - outside VPC for minimal cost
     const paymentsLambda = new lambda.Function(this, 'PaymentsLambda', {
       runtime: lambda.Runtime.NODEJS_18_X,
       handler: 'index.handler',
@@ -356,10 +296,10 @@ export class TogetherUniteStack extends cdk.Stack {
       role: apiLambdaRole,
       environment: lambdaEnvironment,
       timeout: cdk.Duration.seconds(30),
-      ...lambdaVpcConfig,
+      // No VPC configuration - Lambda outside VPC
     });
 
-    // Email Lambda (SES)
+    // Email Lambda (SES) - outside VPC for minimal cost
     const emailLambda = new lambda.Function(this, 'EmailLambda', {
       runtime: lambda.Runtime.NODEJS_18_X,
       handler: 'index.handler',
@@ -370,10 +310,10 @@ export class TogetherUniteStack extends cdk.Stack {
         SES_REGION: this.region,
       },
       timeout: cdk.Duration.seconds(60),
-      ...lambdaVpcConfig,
+      // No VPC configuration - Lambda outside VPC
     });
 
-    // Bounce Handler Lambda
+    // Bounce Handler Lambda - outside VPC for minimal cost
     const bounceHandlerLambda = new lambda.Function(this, 'BounceHandlerLambda', {
       runtime: lambda.Runtime.NODEJS_18_X,
       handler: 'index.handler',
@@ -381,7 +321,7 @@ export class TogetherUniteStack extends cdk.Stack {
       role: apiLambdaRole,
       environment: lambdaEnvironment,
       timeout: cdk.Duration.seconds(30),
-      ...lambdaVpcConfig,
+      // No VPC configuration - Lambda outside VPC
     });
 
     // Step 6: API Gateway

@@ -453,28 +453,31 @@ Before going to production:
 
 ## Cost Estimation
 
-Approximate monthly costs (us-east-1):
+Approximate monthly costs (us-east-1) - **TRIAL CONFIGURATION (Minimal Cost)**:
 
-- **VPC Interface Endpoints:** ~$7/month per endpoint per AZ (5 endpoints × 2 AZs = ~$70/month)
-  - Secrets Manager endpoint
-  - SES endpoint
-  - Cognito endpoint
-  - SNS endpoint
-  - CloudWatch Logs endpoint
-- **RDS t3.micro:** ~$15/month
-- **Lambda:** ~$0-5/month (depending on usage)
+- **VPC:** ~$0/month (minimal VPC costs, single AZ)
+- **RDS t3.micro:** ~$15/month (public subnet, 1 day backup retention)
+- **Lambda:** ~$0-5/month (depending on usage, outside VPC)
 - **API Gateway:** ~$3.50 per million requests
 - **S3:** ~$0.023 per GB storage
 - **CloudFront:** ~$0.085 per GB data transfer
 - **SES:** ~$0.10 per 1,000 emails
 - **SNS:** ~$0.50 per million requests
 
-**Total:** ~$90-100/month for minimal usage
+**Total:** ~$20-25/month for minimal usage (trial)
 
-**Note:** VPC Interface Endpoints are more expensive than NAT Gateway but provide better security and performance. For cost optimization, consider:
-- Using fewer endpoints (combine services where possible)
-- Using Gateway endpoints for S3/DynamoDB (free)
-- Using a single AZ for development (reduces endpoint costs by 50%)
+**Security Notes for Trial:**
+- Lambda functions are outside VPC (no VPC endpoint costs)
+- RDS is in public subnet with security group allowing connections from any IP
+- **For production, you should:**
+  - Move Lambda functions into VPC
+  - Move RDS to private subnet
+  - Use VPC endpoints or NAT Gateway
+  - Restrict RDS security group to specific IP ranges
+  - Enable RDS encryption at rest
+  - Increase backup retention
+
+**Production Cost Estimate:** ~$90-100/month (with VPC endpoints or NAT Gateway)
 
 ## Next Steps
 

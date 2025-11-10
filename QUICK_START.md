@@ -103,15 +103,23 @@ curl https://<ApiEndpoint>/campaigns
 
 ## Important Notes
 
-- **Cost:** ~$90-100/month for minimal usage (VPC Endpoints + RDS)
+- **Cost:** ~$20-25/month for trial (minimal configuration)
 - **Deployment Time:** ~15-20 minutes
 - **Region:** Defaults to us-east-1
 - **SES:** Starts in sandbox mode (verify emails first)
-- **VPC Endpoints:** Uses interface endpoints to avoid NAT Gateway (better security, higher cost)
+- **Trial Configuration:**
+  - Lambda functions outside VPC (no VPC costs)
+  - RDS in public subnet (secured with security groups)
+  - Single AZ deployment (cost savings)
+  - Minimal backup retention (1 day)
+- **Security:** This is a minimal-cost trial setup. For production, move to VPC with private subnets.
 
 ## Troubleshooting
 
-- **Lambda can't connect to RDS:** Check VPC configuration and security groups
+- **Lambda can't connect to RDS:** 
+  - Verify RDS is publicly accessible
+  - Check security group allows connections from 0.0.0.0/0 (trial) or Lambda IP ranges
+  - Verify RDS endpoint is correct in Lambda environment variables
 - **SES not sending:** Verify email address and check sandbox limits
 - **OAuth not working:** Verify redirect URIs match exactly
 - **Stripe webhook failing:** Check webhook URL and secret

@@ -18,10 +18,11 @@ export class TogetherUniteStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // Step 1: VPC for RDS (isolated subnet for database)
+    // Step 1: VPC for RDS and Lambda
+    // Using PRIVATE_ISOLATED with VPC endpoints to avoid NAT Gateway costs
     const vpc = new ec2.Vpc(this, 'TogetherUniteVpc', {
       maxAzs: 2,
-      natGateways: 0, // Cost optimization - RDS in private subnet
+      natGateways: 0, // No NAT Gateway - using VPC endpoints instead
       subnetConfiguration: [
         {
           cidrMask: 24,
@@ -198,28 +199,35 @@ export class TogetherUniteStack extends cdk.Stack {
     });
 
     // Step 5: Lambda Functions for API
+    // Create security group for Lambda functions
+    const lambdaSecurityGroup = new ec2.SecurityGroup(this, 'LambdaSecurityGroup', {
+      vpc,
+      description: 'Security group for Lambda functions',
+      allowAllOutbound: true,
+    });
+
+    // Allow Lambda to connect to RDS
+    dbInstance.connections.allowFrom(
+      lambdaSecurityGroup,
+      ec2.Port.tcp(5432),
+      'Allow Lambda to access RDS'
+    );
+
+    // Create Lambda role with VPC permissions
     const apiLambdaRole = new iam.Role(this, 'ApiLambdaRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName(
           'service-role/AWSLambdaBasicExecutionRole'
         ),
+        iam.ManagedPolicy.fromAwsManagedPolicyName(
+          'service-role/AWSLambdaVPCAccessExecutionRole'
+        ),
       ],
     });
 
     // Grant RDS access
     dbSecret.grantRead(apiLambdaRole);
-    dbInstance.connections.allowFrom(
-      new ec2.Connections({
-        securityGroups: [
-          new ec2.SecurityGroup(this, 'LambdaSecurityGroup', {
-            vpc,
-            allowAllOutbound: true,
-          }),
-        ],
-      }),
-      ec2.Port.tcp(5432)
-    );
 
     // Grant SES permissions
     apiLambdaRole.addToPolicy(
@@ -234,17 +242,22 @@ export class TogetherUniteStack extends cdk.Stack {
       })
     );
 
-    // Grant SNS permissions for bounce tracking
+    // Grant Cognito permissions for Auth Lambda
     apiLambdaRole.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        actions: ['sns:Publish'],
-        resources: ['*'],
+        actions: [
+          'cognito-idp:AdminGetUser',
+          'cognito-idp:AdminCreateUser',
+          'cognito-idp:AdminUpdateUserAttributes',
+        ],
+        resources: [userPool.userPoolArn],
       })
     );
 
     // Common Lambda environment variables
     const lambdaEnvironment = {
+      AWS_REGION: this.region,
       DB_SECRET_ARN: dbSecret.secretArn,
       DB_ENDPOINT: dbInstance.instanceEndpoint.hostname,
       DB_NAME: 'togetherunite',
@@ -255,6 +268,64 @@ export class TogetherUniteStack extends cdk.Stack {
       STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || '',
     };
 
+    // VPC Endpoints for AWS services (replaces NAT Gateway)
+    // These allow Lambda in private subnet to access AWS services without internet gateway
+    // Note: VPC Interface Endpoints cost ~$7/month per endpoint per AZ
+    // With 5 endpoints across 2 AZs, this is ~$70/month (vs ~$32/month for NAT Gateway)
+    // Benefits: Better security, lower latency, no data transfer costs
+    const privateSubnets = vpc.selectSubnets({
+      subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+    });
+
+    // Secrets Manager endpoint
+    vpc.addInterfaceEndpoint('SecretsManagerEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
+      subnets: {
+        subnets: privateSubnets.subnets,
+      },
+    });
+
+    // SES endpoint
+    vpc.addInterfaceEndpoint('SESEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.SES,
+      subnets: {
+        subnets: privateSubnets.subnets,
+      },
+    });
+
+    // Cognito endpoint
+    vpc.addInterfaceEndpoint('CognitoEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.COGNITO_IDP,
+      subnets: {
+        subnets: privateSubnets.subnets,
+      },
+    });
+
+    // SNS endpoint
+    vpc.addInterfaceEndpoint('SNSEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.SNS,
+      subnets: {
+        subnets: privateSubnets.subnets,
+      },
+    });
+
+    // CloudWatch Logs endpoint (for Lambda logging)
+    vpc.addInterfaceEndpoint('CloudWatchLogsEndpoint', {
+      service: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
+      subnets: {
+        subnets: privateSubnets.subnets,
+      },
+    });
+
+    // Common VPC configuration for Lambda functions
+    const lambdaVpcConfig = {
+      vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+      },
+      securityGroups: [lambdaSecurityGroup],
+    };
+
     // Campaigns Lambda
     const campaignsLambda = new lambda.Function(this, 'CampaignsLambda', {
       runtime: lambda.Runtime.NODEJS_18_X,
@@ -263,6 +334,7 @@ export class TogetherUniteStack extends cdk.Stack {
       role: apiLambdaRole,
       environment: lambdaEnvironment,
       timeout: cdk.Duration.seconds(30),
+      ...lambdaVpcConfig,
     });
 
     // Auth Lambda
@@ -273,6 +345,7 @@ export class TogetherUniteStack extends cdk.Stack {
       role: apiLambdaRole,
       environment: lambdaEnvironment,
       timeout: cdk.Duration.seconds(30),
+      ...lambdaVpcConfig,
     });
 
     // Payments Lambda (Stripe)
@@ -283,6 +356,7 @@ export class TogetherUniteStack extends cdk.Stack {
       role: apiLambdaRole,
       environment: lambdaEnvironment,
       timeout: cdk.Duration.seconds(30),
+      ...lambdaVpcConfig,
     });
 
     // Email Lambda (SES)
@@ -296,6 +370,7 @@ export class TogetherUniteStack extends cdk.Stack {
         SES_REGION: this.region,
       },
       timeout: cdk.Duration.seconds(60),
+      ...lambdaVpcConfig,
     });
 
     // Bounce Handler Lambda
@@ -306,6 +381,7 @@ export class TogetherUniteStack extends cdk.Stack {
       role: apiLambdaRole,
       environment: lambdaEnvironment,
       timeout: cdk.Duration.seconds(30),
+      ...lambdaVpcConfig,
     });
 
     // Step 6: API Gateway
@@ -362,6 +438,16 @@ export class TogetherUniteStack extends cdk.Stack {
     // SES Configuration Set (for bounce tracking)
     const configurationSet = new ses.ConfigurationSet(this, 'SESConfigurationSet', {
       configurationSetName: 'togetherunite-bounces',
+    });
+
+    // Add event destination for bounce notifications
+    configurationSet.addEventDestination('BounceDestination', {
+      destination: ses.EventDestination.snsTopic(bounceTopic),
+      events: [
+        ses.EmailSendingEvent.BOUNCE,
+        ses.EmailSendingEvent.COMPLAINT,
+        ses.EmailSendingEvent.REJECT,
+      ],
     });
 
     // Step 8: Outputs
